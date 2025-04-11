@@ -1,0 +1,53 @@
+# VIM BASIC MOVEMENT PRACTICE
+# Practice file for Steps 1-2: Basic cursor movement (h, j, k, l)
+
+This is a simple text file to practice your basic Vim movements.
+Start by placing your cursor at the beginning of this file.
+
+Try to navigate to the X marks below using only h, j, k, and l.
+Don't use arrow keys! Build that muscle memory.
+
+           X
+      X
+                 X
+    X
+                      X
+          X
+  X
+                   X
+         X
+                X
+
+Now practice navigating between these words:
+Linux Docker Kubernetes Terraform AWS Python CircleCI GitHub GitLab
+
+-----------------------------------------------------------------
+EXERCISE: Move your cursor to the beginning of each line in this
+section, then to the end of each line, then to specific characters.
+Remember, in normal mode:
+h - left
+j - down
+k - up
+l - right
+-----------------------------------------------------------------
+
+Now, try to trace the path through this maze using only h, j, k, l:
+
+START →  #######################
+          #                   #
+          #   #############   #
+          #   #           #   #
+          #   #   #####   #   #
+          #   #   #   #   #   #
+          #   #   #   #   #   #
+          #   #   #   #   #   #
+          #   #   #   #   #   #
+          #   #   #   #   #   #
+          #   #   #   #   #   #
+          #   #       #   #   #
+          #   #########   #   #
+          #               #   #
+          #################   #
+                          ↓   #
+                        FINISH #
+                          #####

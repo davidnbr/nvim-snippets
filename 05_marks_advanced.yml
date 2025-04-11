@@ -1,0 +1,284 @@
+# VIM MARKS AND ADVANCED TECHNIQUES PRACTICE
+# Practice file for Steps 11-12: Marks (ma, 'a, `a) and Advanced Techniques
+
+# This is a CircleCI configuration for a Python project
+# Practice setting marks on different sections and jumping between them
+# Try using:
+# - ma to set mark "a" at a specific position
+# - 'a to jump to the line of mark "a"
+# - `a to jump to the exact position of mark "a"
+# - Try using counts with motions: 3w, 5j, etc.
+# - Try combining operators, counts, and motions: d2j, c3w, etc.
+
+version: 2.1
+
+# ======================================================
+# ORBS
+# ======================================================
+orbs:
+  python: circleci/python@2.1.1
+  aws-cli: circleci/aws-cli@3.1.4
+  terraform: circleci/terraform@3.2.1
+
+# ======================================================
+# PARAMETERS
+# ======================================================
+parameters:
+  python-version:
+    type: string
+    default: "3.11"
+  terraform-version:
+    type: string
+    default: "1.5.7"
+  aws-region:
+    type: string
+    default: "us-west-2"
+  deploy-environment:
+    type: string
+    default: "staging"
+    description: "The environment to deploy to (development, staging, production)"
+
+# ======================================================
+# EXECUTORS
+# ======================================================
+executors:
+  python-executor:
+    docker:
+      - image: cimg/python:<< pipeline.parameters.python-version >>
+        environment:
+          PYTHONUNBUFFERED: 1
+          PYTHONDONTWRITEBYTECODE: 1
+          AWS_REGION: << pipeline.parameters.aws-region >>
+  terraform-executor:
+    docker:
+      - image: cimg/base:2023.10
+        environment:
+          AWS_REGION: << pipeline.parameters.aws-region >>
+
+# ======================================================
+# COMMANDS
+# ======================================================
+commands:
+  install-dependencies:
+    description: "Install Python dependencies"
+    parameters:
+      requirements-file:
+        type: string
+        default: "requirements.txt"
+    steps:
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "<< parameters.requirements-file >>" }}
+            - v1-dependencies-
+      - run:
+          name: Install dependencies
+          command: |
+            python -m venv .venv
+            . .venv/bin/activate
+            pip install --upgrade pip
+            pip install -r << parameters.requirements-file >>
+      - save_cache:
+          paths:
+            - ./.venv
+          key: v1-dependencies-{{ checksum "<< parameters.requirements-file >>" }}
+
+  run-linting:
+    description: "Run linting checks"
+    steps:
+      - run:
+          name: Run flake8
+          command: |
+            . .venv/bin/activate
+            flake8 src tests
+      - run:
+          name: Run mypy
+          command: |
+            . .venv/bin/activate
+            mypy src tests
+      - run:
+          name: Run black check
+          command: |
+            . .venv/bin/activate
+            black --check src tests
+
+  run-tests:
+    description: "Run unit tests"
+    parameters:
+      test-directory:
+        type: string
+        default: "tests"
+    steps:
+      - run:
+          name: Run pytest
+          command: |
+            . .venv/bin/activate
+            pytest -xvs << parameters.test-directory >>
+      - store_test_results:
+          path: test-results
+      - store_artifacts:
+          path: test-results
+          destination: tr
+
+  setup-terraform:
+    description: "Set up Terraform"
+    steps:
+      - terraform/install:
+          terraform_version: << pipeline.parameters.terraform-version >>
+      - run:
+          name: Initialize Terraform
+          command: |
+            cd terraform/<< pipeline.parameters.deploy-environment >>
+            terraform init -input=false
+      - run:
+          name: Validate Terraform
+          command: |
+            cd terraform/<< pipeline.parameters.deploy-environment >>
+            terraform validate
+
+  deploy-terraform:
+    description: "Deploy with Terraform"
+    steps:
+      - run:
+          name: Plan Terraform changes
+          command: |
+            cd terraform/<< pipeline.parameters.deploy-environment >>
+            terraform plan -out=tfplan -input=false
+      - run:
+          name: Apply Terraform changes
+          command: |
+            cd terraform/<< pipeline.parameters.deploy-environment >>
+            terraform apply -auto-approve tfplan
+
+# ======================================================
+# JOBS
+# ======================================================
+jobs:
+  lint-and-test:
+    executor: python-executor
+    steps:
+      - checkout
+      - install-dependencies:
+          requirements-file: "requirements-dev.txt"
+      - run-linting
+      - run-tests
+
+  build-and-package:
+    executor: python-executor
+    steps:
+      - checkout
+      - install-dependencies
+      - run:
+          name: Build package
+          command: |
+            . .venv/bin/activate
+            pip install build
+            python -m build
+      - run:
+          name: Run smoke test on package
+          command: |
+            . .venv/bin/activate
+            pip install dist/*.whl
+            python -c "import project_name; print(project_name.__version__)"
+      - persist_to_workspace:
+          root: .
+          paths:
+            - dist
+
+  terraform-plan:
+    executor: terraform-executor
+    steps:
+      - checkout
+      - setup-terraform
+      - aws-cli/setup:
+          profile-name: default
+      - run:
+          name: Plan Terraform changes
+          command: |
+            cd terraform/<< pipeline.parameters.deploy-environment >>
+            terraform plan -input=false
+
+  terraform-apply:
+    executor: terraform-executor
+    steps:
+      - checkout
+      - setup-terraform
+      - aws-cli/setup:
+          profile-name: default
+      - deploy-terraform
+
+  deploy-application:
+    executor: python-executor
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - aws-cli/setup:
+          profile-name: default
+      - run:
+          name: Deploy application
+          command: |
+            . .venv/bin/activate
+            pip install -r requirements-deploy.txt
+            python scripts/deploy.py --environment << pipeline.parameters.deploy-environment >>
+      - run:
+          name: Verify deployment
+          command: |
+            . .venv/bin/activate
+            python scripts/verify_deployment.py --environment << pipeline.parameters.deploy-environment >>
+
+# ======================================================
+# WORKFLOWS
+# ======================================================
+workflows:
+  version: 2
+  build-test-deploy:
+    jobs:
+      - lint-and-test
+      - build-and-package:
+          requires:
+            - lint-and-test
+      - terraform-plan:
+          requires:
+            - lint-and-test
+          filters:
+            branches:
+              only:
+                - main
+                - develop
+      - approve-terraform:
+          type: approval
+          requires:
+            - terraform-plan
+          filters:
+            branches:
+              only:
+                - main
+      - terraform-apply:
+          requires:
+            - approve-terraform
+          filters:
+            branches:
+              only:
+                - main
+      - deploy-application:
+          requires:
+            - build-and-package
+            - terraform-apply
+          filters:
+            branches:
+              only:
+                - main
+
+  nightly-tests:
+    triggers:
+      - schedule:
+          cron: "0 0 * * *"
+          filters:
+            branches:
+              only:
+                - main
+    jobs:
+      - lint-and-test
+      - build-and-package:
+          requires:
+            - lint-and-test
